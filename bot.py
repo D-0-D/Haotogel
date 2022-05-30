@@ -1,6 +1,8 @@
+import contextlib
 import logging
 import os
-from telethon import TelegramClient, events, Button
+import asyncio
+from telethon import TelegramClient, events, Button, errors
 from telethon.sessions import StringSession
 from decouple import config
 
@@ -9,16 +11,6 @@ logging.basicConfig(
     format="[%(levelname)s] %(asctime)s - %(message)s",
 )
 log = logging.getLogger(__name__)
-
-log.info("Connecting bot...")
-try:
-    bot = TelegramClient(None, config("API_ID", cast=int), config("API_HASH")).start(
-        bot_token=config("BOT_TOKEN")
-    )
-except Exception as e:
-    log.error(e)
-    exit(1)
-log.info("Connected bot.")
 
 log.info("Connecting user...")
 try:
@@ -48,23 +40,16 @@ async def listener(event):
     await steal(event.chat_id, event.message.id, get_groups)
 
 
-@bot.on(events.NewMessage(pattern="/start"))
-async def send_welcome(event):
-    await event.reply(
-        "Hai bosku, Kamu akan di hubungkan dengan salah satu admin kami.\nMohon tunggu !\n\nPastikan bosku hanya mendaftar di link resmi official HAOTOGEL. link pendaftaran klik tombol di bawah ini👇",
-        buttons=[
-            Button.url("🔥 LINK DAFTAR RESMI 🔥", url="bit.ly/Haotogel-Official"),
-            Button.url("💥 LINK ALTERNATIF 💥", url="bit.ly/ALTERNATIF-HAOTOGEL"),
-        ],
-    )
-
-
 async def steal(chat_id, message_id, get_groups):
-    message = (await client.get_messages(chat_id, ids=[message_id]))[0]
+    try:
+        message = (await client.get_messages(chat_id, ids=[message_id]))[0]
+    except errors.FloodWaitError as e:
+        await asyncio.sleep(e.seconds + 10)
+        log.info("Floodwait, sleeping for %s seconds", (e.seconds + 10))
     media = await message.download_media()
     msg = message.text
     buttons = message.buttons or []
-    logged = await bot.upload_file(media) if media else None
+    logged = await client.upload_file(media) if media else None
     buttons.append(
         [Button.url("🔥 DAFTAR DI SINI 🔥", url="https://bit.ly/Haotogel-Official")],
     )
@@ -77,12 +62,33 @@ async def steal(chat_id, message_id, get_groups):
     # logged_ = await client.send_message(log_chat, msg, file=media)
     # msg = (await client.get_messages(log_chat, ids=[logged_.id]))[0]
     for i in get_groups:
-        await bot.send_message(
-            int(i), msg, file=logged, buttons=buttons, noforwards=True
-        )
+        try:
+            await client.send_message(
+                int(i), msg, file=logged, buttons=buttons, noforwards=True
+            )
+        except errors.FloodWaitError as e:
+            await asyncio.sleep(e.seconds + 10)
+            log.info("Floodwait, sleeping for %s seconds.", (e.seconds + 10))
     if media and os.path.exists(media):
         os.remove(media)
 
 
-log.info("Started bot.")
+@client.on(events.ChatAction())
+async def chataction(event):
+    with contextlib.suppress(Exception):
+        if event.user_joined or event.user_added:
+            user = await event.get_user()
+            full_name = ""
+            if user.first_name:
+                full_name += f"{user.first_name}"
+            if user.last_name:
+                full_name += f" {user.last_name}"
+            msg = await event.reply(
+                f"Hi [{full_name}](tg://user?id={user.id}), welcome to the chat!"
+            )
+            await asyncio.sleep(60)
+            await msg.delete()
+
+
+log.info("Started userbot.")
 client.run_until_disconnected()
